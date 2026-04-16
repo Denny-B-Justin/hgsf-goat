@@ -3,3 +3,6 @@
 .csv
 docs/
 hgsfvenv/
+.env
+__pycache__/
+markdown/
