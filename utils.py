@@ -2,7 +2,7 @@
 utils.py
 --------
 PDF extraction and AI-powered field generation utilities.
-Uses PyMuPDF for text extraction and the Anthropic API (Claude) for
+Uses PyMuPDF for text extraction and the Google Gemini API for
 intelligent structured data extraction from World Bank-style project documents.
 """
 
@@ -14,16 +14,16 @@ import fitz  # PyMuPDF
 import pandas as pd
 from pathlib import Path
 from typing import Optional
-import anthropic
+import google.generativeai as genai
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+GEMINI_MODEL = "gemini-3-flash-preview"
 MAX_TOKENS = 2000
 CHUNK_SIZE = 80_000          # characters — safe context window per API call
-RATE_LIMIT_DELAY = 1.0       # seconds between API calls to avoid throttling
+RATE_LIMIT_DELAY = 100.0       # seconds between API calls to avoid throttling
 
 COLUMNS = [
     "PROJ_DEV_OBJECTIVE_DESC",
@@ -201,29 +201,88 @@ def prioritize_text(full_text: str, max_chars: int = CHUNK_SIZE) -> str:
 
 class FieldExtractor:
     """
-    Uses the Anthropic Claude API to extract structured fields from PDF text.
+    Uses the Google Gemini API to extract structured fields from PDF text.
     Supports chunked processing for large documents.
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not key:
             raise ValueError(
-                "Anthropic API key not found. Set the ANTHROPIC_API_KEY "
+                "Google API key not found. Set the GOOGLE_API_KEY "
                 "environment variable or pass api_key= to FieldExtractor."
             )
-        self.client = anthropic.Anthropic(api_key=key)
+        genai.configure(api_key=key)
+        self.model = genai.GenerativeModel(
+            GEMINI_MODEL,
+            safety_settings=[
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_UNSPECIFIED,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_DEROGATORY,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_VIOLENCE,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_SEXUAL,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_MEDICAL,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+                {
+                    "category": genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS,
+                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
+                },
+            ],
+        )
 
     def _call_api(self, text: str) -> dict:
         """Make a single API call to extract fields from text."""
         prompt = EXTRACTION_PROMPT_TEMPLATE.format(text=text)
-        response = self.client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.content[0].text.strip()
+        full_prompt = SYSTEM_PROMPT + "\n\n" + prompt
+        
+        try:
+            response = self.model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=MAX_TOKENS,
+                    temperature=0.2,  # Low temperature for consistency
+                ),
+            )
+        except Exception as e:
+            raise ValueError(f"API call failed: {e}")
+        
+        # Check for blocked response
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+            print(f"    WARNING: API blocked - {response.prompt_feedback}")
+        
+        # Get text safely, handling blocked responses
+        try:
+            raw = response.text.strip() if response.text else ""
+        except Exception as e:
+            # Response might be blocked
+            finish_reason = "UNKNOWN"
+            if hasattr(response, 'candidates') and response.candidates:
+                finish_reason = str(response.candidates[0].finish_reason) if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
+            raise ValueError(
+                f"Could not extract response text. Finish reason: {finish_reason}. Error: {e}"
+            )
+        
+        if not raw:
+            finish_reason = "UNKNOWN"
+            if hasattr(response, 'candidates') and response.candidates:
+                finish_reason = str(response.candidates[0].finish_reason) if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
+            raise ValueError(
+                f"Empty API response. Finish reason: {finish_reason}. "
+                f"This may indicate a safety filter block or API issue."
+            )
 
         # Strip any accidental markdown fences
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -235,8 +294,12 @@ class FieldExtractor:
             # Attempt to extract JSON object substring
             match = re.search(r"\{.*\}", raw, re.DOTALL)
             if match:
-                return json.loads(match.group())
-            raise ValueError(f"Could not parse API response as JSON:\n{raw}")
+                try:
+                    return json.loads(match.group())
+                except json.JSONDecodeError:
+                    pass
+            print(f"    DEBUG: Raw API response (first 500 chars):\n{raw[:500]}")
+            raise ValueError(f"Could not parse API response as JSON")
 
     def _merge_results(self, results: list[dict]) -> dict:
         """

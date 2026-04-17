@@ -6,10 +6,10 @@ Entry point for the PDF → CSV extraction pipeline.
 Usage:
     python main.py
     python main.py --docs ./docs --output data.csv
-    ANTHROPIC_API_KEY=sk-... python main.py
+    GOOGLE_API_KEY=your-key... python main.py
 
 Environment:
-    ANTHROPIC_API_KEY   Required. Your Anthropic API key.
+    GOOGLE_API_KEY      Required. Your Google Generative AI API key.
     DOCS_FOLDER         Optional override for the docs folder path.
     OUTPUT_CSV          Optional override for the output CSV path.
 """
@@ -41,7 +41,7 @@ def parse_args():
         "--api-key",
         type=str,
         default=None,
-        help="Anthropic API key (overrides ANTHROPIC_API_KEY env var)",
+        help="Google API key (overrides GOOGLE_API_KEY env var)",
     )
     return parser.parse_args()
 
@@ -54,15 +54,15 @@ def main():
     print("=" * 60)
     print(f"  Docs folder : {args.docs}")
     print(f"  Output CSV  : {args.output}")
-    print(f"  Model       : claude-sonnet-4-20250514")
+    print(f"  Model       : gemini-2.0-flash")
     print("=" * 60 + "\n")
 
-    api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
+    api_key = args.api_key or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print(
-            "ERROR: ANTHROPIC_API_KEY not set.\n"
+            "ERROR: GOOGLE_API_KEY not set.\n"
             "Set it as an environment variable:\n"
-            "    export ANTHROPIC_API_KEY=sk-ant-...\n"
+            "    export GOOGLE_API_KEY=your-google-api-key\n"
             "Or pass it via --api-key flag."
         )
         sys.exit(1)
