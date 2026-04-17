@@ -20,10 +20,10 @@ import google.generativeai as genai
 # Configuration
 # ---------------------------------------------------------------------------
 
-GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_MODEL = "gemma-3-27b-it"
 MAX_TOKENS = 2000
-CHUNK_SIZE = 80_000          # characters — safe context window per API call
-RATE_LIMIT_DELAY = 100.0       # seconds between API calls to avoid throttling
+CHUNK_SIZE = 10_000          # characters — safe context window per API call
+RATE_LIMIT_DELAY = 20.0       # seconds between API calls to avoid throttling
 
 COLUMNS = [
     "PROJ_DEV_OBJECTIVE_DESC",
@@ -213,76 +213,21 @@ class FieldExtractor:
                 "environment variable or pass api_key= to FieldExtractor."
             )
         genai.configure(api_key=key)
-        self.model = genai.GenerativeModel(
-            GEMINI_MODEL,
-            safety_settings=[
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_UNSPECIFIED,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_DEROGATORY,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_VIOLENCE,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_SEXUAL,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_MEDICAL,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-                {
-                    "category": genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS,
-                    "threshold": genai.types.HarmBlockThreshold.BLOCK_NONE,
-                },
-            ],
-        )
+        self.model = genai.GenerativeModel(GEMINI_MODEL)
 
     def _call_api(self, text: str) -> dict:
         """Make a single API call to extract fields from text."""
         prompt = EXTRACTION_PROMPT_TEMPLATE.format(text=text)
         full_prompt = SYSTEM_PROMPT + "\n\n" + prompt
         
-        try:
-            response = self.model.generate_content(
-                full_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=MAX_TOKENS,
-                    temperature=0.2,  # Low temperature for consistency
-                ),
-            )
-        except Exception as e:
-            raise ValueError(f"API call failed: {e}")
-        
-        # Check for blocked response
-        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-            print(f"    WARNING: API blocked - {response.prompt_feedback}")
-        
-        # Get text safely, handling blocked responses
-        try:
-            raw = response.text.strip() if response.text else ""
-        except Exception as e:
-            # Response might be blocked
-            finish_reason = "UNKNOWN"
-            if hasattr(response, 'candidates') and response.candidates:
-                finish_reason = str(response.candidates[0].finish_reason) if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
-            raise ValueError(
-                f"Could not extract response text. Finish reason: {finish_reason}. Error: {e}"
-            )
-        
-        if not raw:
-            finish_reason = "UNKNOWN"
-            if hasattr(response, 'candidates') and response.candidates:
-                finish_reason = str(response.candidates[0].finish_reason) if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
-            raise ValueError(
-                f"Empty API response. Finish reason: {finish_reason}. "
-                f"This may indicate a safety filter block or API issue."
-            )
+        response = self.model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=MAX_TOKENS,
+                temperature=0.2,  # Low temperature for consistency
+            ),
+        )
+        raw = response.text.strip()
 
         # Strip any accidental markdown fences
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -294,12 +239,8 @@ class FieldExtractor:
             # Attempt to extract JSON object substring
             match = re.search(r"\{.*\}", raw, re.DOTALL)
             if match:
-                try:
-                    return json.loads(match.group())
-                except json.JSONDecodeError:
-                    pass
-            print(f"    DEBUG: Raw API response (first 500 chars):\n{raw[:500]}")
-            raise ValueError(f"Could not parse API response as JSON")
+                return json.loads(match.group())
+            raise ValueError(f"Could not parse API response as JSON:\n{raw}")
 
     def _merge_results(self, results: list[dict]) -> dict:
         """
