@@ -22,3 +22,20 @@
 # Indicators                    - (N) If there are any indicators, KPIs, IRIs, or any quantitative metrics mentioned in the file that are associated with the project, write them with information including the name of the indicator and its description. If not available, write "Not Available"
 # Components                    - (N) All the components that are associated with the project. If not available, write "Not Available"
 # DLI_DLR                       - (N) Disbursement Linked Indicators (DLI) and Disbursement Linked Results (DLR)
+
+from document_conversion import convert_to_markdown
+import os 
+
+docs_folder = "docs"
+
+for root, dirs, files in os.walk(docs_folder):
+    for file in files:
+        if file.endswith(".pdf"):
+            pdf_path = os.path.join(root, file)
+            print(pdf_path)
+            convert_to_markdown(
+                filepath= pdf_path,
+                output_dir = 'markdown',
+                )
+            # print(pdf_path)
+

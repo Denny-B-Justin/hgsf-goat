@@ -3,3 +3,4 @@ marker-pdf == 1.8.2
 langchain ==0.3.26
 PyMuPDF==1.26.3
 pandas
+anthropic>=0.25.0
